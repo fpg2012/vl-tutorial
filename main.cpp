@@ -38,15 +38,18 @@ private:
 	void mainLoop();
 	void cleanup();
 
+	void createInstance();
 	void checkSupportedExtensions(uint32_t glfwExtensionCount, const char **glfwExtentions);
 	bool checkValidationLayersSupport();
 	void pickPhysicalDevice();
 	bool isDeviceSuitable(VkPhysicalDevice device);
 	QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device);
+	void createLogicalDevice();
 
 	GLFWwindow* window;
 	VkInstance instance;
 	VkPhysicalDevice physicalDevice = VK_NULL_HANDLE; // will be implicitly destroyed
+	VkDevice device; // logical device
 };
 
 using HTA = HelloTriangleApplication;
@@ -60,45 +63,14 @@ void HTA::run() {
 
 // init VkInstance, physical device and logical device
 void HTA::initVulkan() {
-	VkApplicationInfo appInfo{
-		.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
-		.pApplicationName = "Hello Triangle",
-		.applicationVersion = VK_MAKE_API_VERSION(1, 0, 0, 0),
-		.pEngineName = "No Engine",
-		.engineVersion = VK_MAKE_API_VERSION(1, 0, 0, 0),
-		.apiVersion = VK_API_VERSION_1_0,
-	};
-
-	uint32_t glfwExtensionCount = 0;
-	const char** glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
-	checkSupportedExtensions(glfwExtensionCount, glfwExtensions);
-
-	if (enableValidationLayers && !checkValidationLayersSupport()) {
-		throw std::runtime_error("validation layers requested, but not available!");
-	}
-	
-	VkInstanceCreateInfo createInfo{
-		.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
-		.pApplicationInfo = &appInfo,
-		.enabledLayerCount = 0,
-		.enabledExtensionCount = glfwExtensionCount,
-		.ppEnabledExtensionNames = glfwExtensions,
-	};
-
-	// if to enable some validation layers, add them to the createInfo struct
-	if (enableValidationLayers) {
-		createInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
-		createInfo.ppEnabledLayerNames = validationLayers.data();
-	}
-
-	VkResult result = vkCreateInstance(&createInfo, nullptr, &instance);
-	if (result != VK_SUCCESS) {
-		throw std::runtime_error("failed to create instance!");
-	}
+	createInstance();
+	pickPhysicalDevice();
+	createLogicalDevice();
 }
 
 // a bunch of vkDestroy & vkFree functions
 void HTA::cleanup() {
+	vkDestroyDevice(device, nullptr);
 	vkDestroyInstance(instance, nullptr);
 
 	glfwDestroyWindow(window);
@@ -119,6 +91,44 @@ void HTA::initWindow() {
 	glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
 	// create a window titled "vulkan"
 	window = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan", nullptr, nullptr);
+}
+
+void HTA::createInstance() {
+	VkApplicationInfo appInfo{
+		.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
+		.pApplicationName = "Hello Triangle",
+		.applicationVersion = VK_MAKE_API_VERSION(1, 0, 0, 0),
+		.pEngineName = "No Engine",
+		.engineVersion = VK_MAKE_API_VERSION(1, 0, 0, 0),
+		.apiVersion = VK_API_VERSION_1_0,
+	};
+
+	uint32_t glfwExtensionCount = 0;
+	const char** glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
+	checkSupportedExtensions(glfwExtensionCount, glfwExtensions);
+
+	if (enableValidationLayers && !checkValidationLayersSupport()) {
+		throw std::runtime_error("validation layers requested, but not available!");
+	}
+
+	VkInstanceCreateInfo createInfo{
+		.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
+		.pApplicationInfo = &appInfo,
+		.enabledLayerCount = 0,
+		.enabledExtensionCount = glfwExtensionCount,
+		.ppEnabledExtensionNames = glfwExtensions,
+	};
+
+	// if to enable some validation layers, add them to the createInfo struct
+	if (enableValidationLayers) {
+		createInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
+		createInfo.ppEnabledLayerNames = validationLayers.data();
+	}
+
+	VkResult result = vkCreateInstance(&createInfo, nullptr, &instance);
+	if (result != VK_SUCCESS) {
+		throw std::runtime_error("failed to create instance!");
+	}
 }
 
 void HTA::checkSupportedExtensions(uint32_t glfwExtensionCount, const char** glfwExtentions) {
@@ -206,6 +216,39 @@ QueueFamilyIndices HTA::findQueueFamilies(VkPhysicalDevice device) {
 	}
 
 	return indices;
+}
+
+void HTA::createLogicalDevice() {
+	QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
+	float queuePriority = 1.0f;
+
+	VkDeviceQueueCreateInfo queueCreateInfo{
+		.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+		.queueFamilyIndex = indices.graphicsFamily.value(),
+		.queueCount = 1,
+		.pQueuePriorities = &queuePriority,
+	};
+
+	VkPhysicalDeviceFeatures deviceFeatures{};
+
+	VkDeviceCreateInfo createInfo{
+		.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+		.queueCreateInfoCount = 1,
+		.pQueueCreateInfos = &queueCreateInfo,
+		.enabledLayerCount = 0,
+		.enabledExtensionCount = 0,
+		.pEnabledFeatures = &deviceFeatures,
+	};
+
+	// set device level layers anyway
+	if (enableValidationLayers) {
+		createInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
+		createInfo.ppEnabledLayerNames = validationLayers.data();
+	}
+
+	if (vkCreateDevice(physicalDevice, &createInfo, nullptr, &device) != VK_SUCCESS) {
+		throw std::runtime_error("failed to create logical device!");
+	}
 }
 
 int main() {
