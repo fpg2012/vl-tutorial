@@ -4,9 +4,28 @@
 #include <stdexcept>
 #include <vector>
 #include <cstdlib>
+#include <optional>
 
 const uint32_t WIDTH = 800; // width of the window
 const uint32_t HEIGHT = 600; // height of the window
+
+// validation layers to be used
+const std::vector<const char*> validationLayers = {
+	"VK_LAYER_KHRONOS_validation"
+};
+#ifdef NDEBUG
+const bool enableValidationLayers = false;
+#else
+const bool enableValidationLayers = true;
+#endif
+
+struct QueueFamilyIndices {
+	std::optional<uint32_t> graphicsFamily;
+
+	bool isComplete() {
+		return graphicsFamily.has_value();
+	}
+};
 
 // wrap all operations into this class
 class HelloTriangleApplication {
@@ -20,9 +39,14 @@ private:
 	void cleanup();
 
 	void checkSupportedExtensions(uint32_t glfwExtensionCount, const char **glfwExtentions);
+	bool checkValidationLayersSupport();
+	void pickPhysicalDevice();
+	bool isDeviceSuitable(VkPhysicalDevice device);
+	QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device);
 
 	GLFWwindow* window;
 	VkInstance instance;
+	VkPhysicalDevice physicalDevice = VK_NULL_HANDLE; // will be implicitly destroyed
 };
 
 using HTA = HelloTriangleApplication;
@@ -48,6 +72,10 @@ void HTA::initVulkan() {
 	uint32_t glfwExtensionCount = 0;
 	const char** glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
 	checkSupportedExtensions(glfwExtensionCount, glfwExtensions);
+
+	if (enableValidationLayers && !checkValidationLayersSupport()) {
+		throw std::runtime_error("validation layers requested, but not available!");
+	}
 	
 	VkInstanceCreateInfo createInfo{
 		.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
@@ -56,6 +84,12 @@ void HTA::initVulkan() {
 		.enabledExtensionCount = glfwExtensionCount,
 		.ppEnabledExtensionNames = glfwExtensions,
 	};
+
+	// if to enable some validation layers, add them to the createInfo struct
+	if (enableValidationLayers) {
+		createInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
+		createInfo.ppEnabledLayerNames = validationLayers.data();
+	}
 
 	VkResult result = vkCreateInstance(&createInfo, nullptr, &instance);
 	if (result != VK_SUCCESS) {
@@ -102,6 +136,76 @@ void HTA::checkSupportedExtensions(uint32_t glfwExtensionCount, const char** glf
 	for (uint32_t i = 0; i < glfwExtensionCount; ++i) {
 		std::cout << '\t' << glfwExtentions[i] << '\n';
 	}
+}
+
+bool HTA::checkValidationLayersSupport() {
+	uint32_t layerCount;
+	vkEnumerateInstanceLayerProperties(&layerCount, nullptr);
+
+	std::vector<VkLayerProperties> availableLayers(layerCount);
+	vkEnumerateInstanceLayerProperties(&layerCount, availableLayers.data());
+
+	for (const char* layerName : validationLayers) {
+		bool layerFound = false;
+		for (const auto& layerProperties : availableLayers) {
+			if (strcmp(layerName, layerProperties.layerName) == 0) {
+				layerFound = true;
+				break;
+			}
+		}
+		if (!layerFound) {
+			return false;
+		}
+	}
+	return true;
+}
+
+void HTA::pickPhysicalDevice() {
+	uint32_t physicalDeviceCount = 0;
+	vkEnumeratePhysicalDevices(instance, &physicalDeviceCount, nullptr);
+	if (physicalDeviceCount == 0) {
+		throw std::runtime_error("failed to find GPUs with Vulkan support!");
+	}
+	std::vector<VkPhysicalDevice> devices(physicalDeviceCount);
+	vkEnumeratePhysicalDevices(instance, &physicalDeviceCount, devices.data());
+
+	for (const auto& device : devices) {
+		if (isDeviceSuitable(device)) {
+			physicalDevice = device;
+			break;
+		}
+	}
+	if (physicalDevice == VK_NULL_HANDLE) {
+		throw std::runtime_error("failed to find a suitable GPU!");
+	}
+}
+
+bool HTA::isDeviceSuitable(VkPhysicalDevice device) {
+	QueueFamilyIndices indices = findQueueFamilies(device);
+	return indices.isComplete();
+}
+
+// check which queue are supported by the device
+QueueFamilyIndices HTA::findQueueFamilies(VkPhysicalDevice device) {
+	QueueFamilyIndices indices;
+
+	uint32_t queueFamilyCount = 0;
+	vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, nullptr);
+	std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
+	vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies.data());
+
+	int i = 0;
+	for (const auto& queueFamily : queueFamilies) {
+		if (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+			indices.graphicsFamily = i;
+		}
+		if (indices.isComplete()) {
+			break;
+		}
+		i++;
+	}
+
+	return indices;
 }
 
 int main() {
