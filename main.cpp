@@ -3,6 +3,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <vector>
+#include <set>
 #include <cstdlib>
 #include <optional>
 
@@ -21,9 +22,10 @@ const bool enableValidationLayers = true;
 
 struct QueueFamilyIndices {
 	std::optional<uint32_t> graphicsFamily;
+	std::optional<uint32_t> presentFamily;
 
 	bool isComplete() {
-		return graphicsFamily.has_value();
+		return graphicsFamily.has_value() && presentFamily.has_value();
 	}
 };
 
@@ -45,46 +47,48 @@ private:
 	bool isDeviceSuitable(VkPhysicalDevice device);
 	QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device);
 	void createLogicalDevice();
+	void createSurface();
 
 	GLFWwindow* window;
 	VkInstance instance;
 	VkPhysicalDevice physicalDevice = VK_NULL_HANDLE; // will be implicitly destroyed
 	VkDevice device; // logical device
+	VkSurfaceKHR surface; // window surface exposed by VK_KHR_surface extension
+	VkQueue presentQueue;
 };
 
-using HTA = HelloTriangleApplication;
-
-void HTA::run() {
+void HelloTriangleApplication::run() {
 	initWindow(); // init window with GLFW
 	initVulkan(); // init VkInstance, physical device and logical device
 	mainLoop();
 	cleanup();
 }
 
-// init VkInstance, physical device and logical device
-void HTA::initVulkan() {
+void HelloTriangleApplication::initVulkan() {
 	createInstance();
+	createSurface();
 	pickPhysicalDevice();
 	createLogicalDevice();
 }
 
 // a bunch of vkDestroy & vkFree functions
-void HTA::cleanup() {
+void HelloTriangleApplication::cleanup() {
 	vkDestroyDevice(device, nullptr);
+	vkDestroySurfaceKHR(instance, surface, nullptr);
 	vkDestroyInstance(instance, nullptr);
 
 	glfwDestroyWindow(window);
 	glfwTerminate();
 }
 
-void HTA::mainLoop() {
+void HelloTriangleApplication::mainLoop() {
 	while (!glfwWindowShouldClose(window)) {
 		glfwPollEvents();
 	}
 }
 
 // init window with GLFW
-void HTA::initWindow() {
+void HelloTriangleApplication::initWindow() {
 	glfwInit();
 	std::cout << "vulkan support: " << (glfwVulkanSupported() ? "TRUE" : "FALSE") << std::endl;
 	glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
@@ -93,7 +97,8 @@ void HTA::initWindow() {
 	window = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan", nullptr, nullptr);
 }
 
-void HTA::createInstance() {
+// init VkInstance, physical device and logical device
+void HelloTriangleApplication::createInstance() {
 	VkApplicationInfo appInfo{
 		.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
 		.pApplicationName = "Hello Triangle",
@@ -131,7 +136,7 @@ void HTA::createInstance() {
 	}
 }
 
-void HTA::checkSupportedExtensions(uint32_t glfwExtensionCount, const char** glfwExtentions) {
+void HelloTriangleApplication::checkSupportedExtensions(uint32_t glfwExtensionCount, const char** glfwExtentions) {
 	uint32_t extensionCount = 0;
 	vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, nullptr);
 	std::vector<VkExtensionProperties> extensions(extensionCount);
@@ -148,7 +153,7 @@ void HTA::checkSupportedExtensions(uint32_t glfwExtensionCount, const char** glf
 	}
 }
 
-bool HTA::checkValidationLayersSupport() {
+bool HelloTriangleApplication::checkValidationLayersSupport() {
 	uint32_t layerCount;
 	vkEnumerateInstanceLayerProperties(&layerCount, nullptr);
 
@@ -170,7 +175,7 @@ bool HTA::checkValidationLayersSupport() {
 	return true;
 }
 
-void HTA::pickPhysicalDevice() {
+void HelloTriangleApplication::pickPhysicalDevice() {
 	uint32_t physicalDeviceCount = 0;
 	vkEnumeratePhysicalDevices(instance, &physicalDeviceCount, nullptr);
 	if (physicalDeviceCount == 0) {
@@ -190,13 +195,13 @@ void HTA::pickPhysicalDevice() {
 	}
 }
 
-bool HTA::isDeviceSuitable(VkPhysicalDevice device) {
+bool HelloTriangleApplication::isDeviceSuitable(VkPhysicalDevice device) {
 	QueueFamilyIndices indices = findQueueFamilies(device);
 	return indices.isComplete();
 }
 
 // check which queue are supported by the device
-QueueFamilyIndices HTA::findQueueFamilies(VkPhysicalDevice device) {
+QueueFamilyIndices HelloTriangleApplication::findQueueFamilies(VkPhysicalDevice device) {
 	QueueFamilyIndices indices;
 
 	uint32_t queueFamilyCount = 0;
@@ -206,9 +211,17 @@ QueueFamilyIndices HTA::findQueueFamilies(VkPhysicalDevice device) {
 
 	int i = 0;
 	for (const auto& queueFamily : queueFamilies) {
+		// check graphics support
 		if (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) {
 			indices.graphicsFamily = i;
 		}
+		// check present support
+		VkBool32 presentSupport = false;
+		vkGetPhysicalDeviceSurfaceSupportKHR(device, i, surface, &presentSupport);
+		if (presentSupport) {
+			indices.presentFamily = i;
+		}
+
 		if (indices.isComplete()) {
 			break;
 		}
@@ -218,23 +231,33 @@ QueueFamilyIndices HTA::findQueueFamilies(VkPhysicalDevice device) {
 	return indices;
 }
 
-void HTA::createLogicalDevice() {
+void HelloTriangleApplication::createLogicalDevice() {
+	// queues will be created alongside with logical device
 	QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
 	float queuePriority = 1.0f;
 
-	VkDeviceQueueCreateInfo queueCreateInfo{
-		.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-		.queueFamilyIndex = indices.graphicsFamily.value(),
-		.queueCount = 1,
-		.pQueuePriorities = &queuePriority,
+	std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
+	std::set<uint32_t> uniqueQueueFamilies = { 
+		indices.graphicsFamily.value(), 
+		indices.presentFamily.value()
 	};
+	for (uint32_t queueFamily : uniqueQueueFamilies) {
+		VkDeviceQueueCreateInfo queueCreateInfo{
+			.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+			.queueFamilyIndex = indices.graphicsFamily.value(),
+			.queueCount = 1,
+			.pQueuePriorities = &queuePriority,
+		};
+		queueCreateInfos.push_back(queueCreateInfo);
+	}
 
+	// requires no special features
 	VkPhysicalDeviceFeatures deviceFeatures{};
 
 	VkDeviceCreateInfo createInfo{
 		.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
-		.queueCreateInfoCount = 1,
-		.pQueueCreateInfos = &queueCreateInfo,
+		.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size()),
+		.pQueueCreateInfos = queueCreateInfos.data(),
 		.enabledLayerCount = 0,
 		.enabledExtensionCount = 0,
 		.pEnabledFeatures = &deviceFeatures,
@@ -246,8 +269,17 @@ void HTA::createLogicalDevice() {
 		createInfo.ppEnabledLayerNames = validationLayers.data();
 	}
 
+	// create device, queues are created simutanously
 	if (vkCreateDevice(physicalDevice, &createInfo, nullptr, &device) != VK_SUCCESS) {
 		throw std::runtime_error("failed to create logical device!");
+	}
+
+	vkGetDeviceQueue(device, indices.presentFamily.value(), 0, &presentQueue);
+}
+
+void HelloTriangleApplication::createSurface() {
+	if (glfwCreateWindowSurface(instance, window, nullptr, &surface) != VK_SUCCESS) {
+		throw std::runtime_error("failed to create window surface");
 	}
 }
 
