@@ -88,6 +88,7 @@ private:
 	std::vector<VkImageView> swapChainImageViews;
 	VkRenderPass renderPass;
 	VkPipelineLayout pipelineLayout;
+	VkPipeline graphicsPipeline;
 };
 
 void HelloTriangleApplication::run() {
@@ -110,6 +111,7 @@ void HelloTriangleApplication::initVulkan() {
 
 // a bunch of vkDestroy & vkFree functions
 void HelloTriangleApplication::cleanup() {
+	vkDestroyPipeline(device, graphicsPipeline, nullptr);
 	vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
 	vkDestroyRenderPass(device, renderPass, nullptr);
 	for (auto imageView : swapChainImageViews) {
@@ -653,6 +655,29 @@ void HelloTriangleApplication::createGraphicsPipeline()
 
 	if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS) {
 		throw std::runtime_error("failed to create pipeline layout");
+	}
+
+	VkGraphicsPipelineCreateInfo pipelineInfo{
+		.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+		.stageCount = 2,
+		.pStages = shaderStages,
+		.pVertexInputState = &vertexInputInfo,
+		.pInputAssemblyState = &inputAssembly,
+		.pViewportState = &viewportState,
+		.pRasterizationState = &rasterizer,
+		.pMultisampleState = &multisampling,
+		.pDepthStencilState = nullptr,
+		.pColorBlendState = &colorBlending,
+		.pDynamicState = &dynamicState,
+		.layout = pipelineLayout,
+		.renderPass = renderPass,
+		.subpass = 0, // index of the subpass where this graphics pipeline will be used
+		.basePipelineHandle = VK_NULL_HANDLE, // use for derive from existing pipeline
+		.basePipelineIndex = -1,
+	};
+
+	if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &graphicsPipeline) != VK_SUCCESS) {
+		throw std::runtime_error("failed to create graphics pipeline!");
 	}
 
 	vkDestroyShaderModule(device, fragShaderModule, nullptr);
