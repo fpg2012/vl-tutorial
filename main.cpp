@@ -71,6 +71,7 @@ private:
 	void createImageViews();
 	void createGraphicsPipeline();
 	VkShaderModule createShaderModule(const std::vector<char>& code);
+	void createRenderPass();
 
 	static std::vector<char> readFile(const std::string& filename);
 
@@ -85,6 +86,7 @@ private:
 	VkFormat swapChainImageFormat;
 	VkExtent2D swapChainExtent;
 	std::vector<VkImageView> swapChainImageViews;
+	VkRenderPass renderPass;
 	VkPipelineLayout pipelineLayout;
 };
 
@@ -102,12 +104,14 @@ void HelloTriangleApplication::initVulkan() {
 	createLogicalDevice();
 	createSwapChain();
 	createImageViews();
+	createRenderPass();
 	createGraphicsPipeline();
 }
 
 // a bunch of vkDestroy & vkFree functions
 void HelloTriangleApplication::cleanup() {
 	vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
+	vkDestroyRenderPass(device, renderPass, nullptr);
 	for (auto imageView : swapChainImageViews) {
 		vkDestroyImageView(device, imageView, nullptr);
 	}
@@ -669,6 +673,43 @@ VkShaderModule HelloTriangleApplication::createShaderModule(const std::vector<ch
 		throw std::runtime_error("failed to create shader module!");
 	}
 	return shaderModule;
+}
+
+void HelloTriangleApplication::createRenderPass()
+{
+	VkAttachmentDescription colorAttachment{
+		.format = swapChainImageFormat,
+		.samples = VK_SAMPLE_COUNT_1_BIT,
+		// what to do with the data in the attachment before rendering and after rendering
+		.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR, // Clear the values to a constant at the start
+		.storeOp = VK_ATTACHMENT_STORE_OP_STORE, // Rendered contents will be stored in memory and can be read later
+		.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+		.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+		.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED, // which layout the image will have before the render pass
+		.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, // the layout to automatically transition to when the render pass finishes
+	};
+
+	VkAttachmentReference colorAttachmentRef{
+		.attachment = 0, // the first attachment
+		.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+	};
+
+	VkSubpassDescription subpass{
+		.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
+		.colorAttachmentCount = 1,
+		.pColorAttachments = &colorAttachmentRef,
+	};
+
+	VkRenderPassCreateInfo renderPassInfo{
+		.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+		.attachmentCount = 1,
+		.pAttachments = &colorAttachment,
+		.subpassCount = 1,
+		.pSubpasses = &subpass,
+	};
+	if (vkCreateRenderPass(device, &renderPassInfo, nullptr, &renderPass) != VK_SUCCESS) {
+		throw std::runtime_error("failed to create render pass!");
+	}
 }
 
 std::vector<char> HelloTriangleApplication::readFile(const std::string& filename)
