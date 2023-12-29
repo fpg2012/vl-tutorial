@@ -73,6 +73,9 @@ private:
 	VkShaderModule createShaderModule(const std::vector<char>& code);
 	void createRenderPass();
 	void createFramebuffers();
+	void createCommandPool();
+	void createCommandBuffer();
+	void recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex);
 
 	static std::vector<char> readFile(const std::string& filename);
 
@@ -91,6 +94,8 @@ private:
 	VkPipelineLayout pipelineLayout;
 	VkPipeline graphicsPipeline;
 	std::vector<VkFramebuffer> swapChainFramebuffers;
+	VkCommandPool commandPool;
+	VkCommandBuffer commandBuffer;
 };
 
 void HelloTriangleApplication::run() {
@@ -110,10 +115,13 @@ void HelloTriangleApplication::initVulkan() {
 	createRenderPass();
 	createGraphicsPipeline();
 	createFramebuffers();
+	createCommandPool();
+	createCommandBuffer();
 }
 
 // a bunch of vkDestroy & vkFree functions
 void HelloTriangleApplication::cleanup() {
+	vkDestroyCommandPool(device, commandPool, nullptr);
 	for (auto framebuffer : swapChainFramebuffers) {
 		vkDestroyFramebuffer(device, framebuffer, nullptr);
 	}
@@ -583,7 +591,7 @@ void HelloTriangleApplication::createGraphicsPipeline()
 	};
 
 	// viewport and scissors
-	VkViewport viewport{
+	/* VkViewport viewport{
 		.x = .0f,
 		.y = .0f,
 		.width = (float) swapChainExtent.width,
@@ -594,7 +602,7 @@ void HelloTriangleApplication::createGraphicsPipeline()
 	VkRect2D scissor{
 		.offset = {0, 0},
 		.extent = swapChainExtent,
-	};
+	}; */
 
 	VkPipelineViewportStateCreateInfo viewportState{
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
@@ -764,6 +772,87 @@ void HelloTriangleApplication::createFramebuffers()
 		if (vkCreateFramebuffer(device, &framebufferInfo, nullptr, &swapChainFramebuffers[i]) != VK_SUCCESS) {
 			throw std::runtime_error("failed to create framebuffer");
 		}
+	}
+}
+
+void HelloTriangleApplication::createCommandPool()
+{
+	auto queueFamilyIndices = findQueueFamilies(physicalDevice);
+
+	VkCommandPoolCreateInfo poolInfo{
+		.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+		.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT, // allow command buffer to be rerecorded individually
+		.queueFamilyIndex = queueFamilyIndices.graphicsFamily.value(), // Each command pool can only allocate command buffers that are submitted on a single type of queue
+	};
+
+	if (vkCreateCommandPool(device, &poolInfo, nullptr, &commandPool) != VK_SUCCESS) {
+		throw std::runtime_error("failed to create command pool!");
+	}
+}
+
+void HelloTriangleApplication::createCommandBuffer()
+{
+	VkCommandBufferAllocateInfo allocInfo{
+		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+		.commandPool = commandPool,
+		.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY, // if the allocated command buffers are primary or secondary command buffers
+		.commandBufferCount = 1
+	};
+	if (vkAllocateCommandBuffers(device, &allocInfo, &commandBuffer) != VK_SUCCESS) {
+		throw std::runtime_error("failed to allocate command buffers!");
+	}
+}
+
+// drawing!
+void HelloTriangleApplication::recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex)
+{
+	VkCommandBufferBeginInfo beginInfo{
+		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+		.flags = 0,
+		.pInheritanceInfo = nullptr,
+	};
+
+	if (vkBeginCommandBuffer(commandBuffer, &beginInfo) != VK_SUCCESS) {
+		throw std::runtime_error("failed to begin recording command buffer!");
+	}
+
+	VkClearValue clearColor = { {{.0f, .0f, .0f, 1.0f}} };
+	VkRenderPassBeginInfo renderPassInfo{
+		.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+		.renderPass = renderPass,
+		.framebuffer = swapChainFramebuffers[imageIndex],
+		.renderArea = {
+			.offset = {0, 0},
+			.extent = swapChainExtent,
+		},
+		.clearValueCount = 1,
+		.pClearValues = &clearColor,
+	};
+
+	vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+	vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+	
+	VkViewport viewport{
+		.x = .0f,
+		.y = .0f,
+		.width = (float)swapChainExtent.width,
+		.height = (float)swapChainExtent.height,
+		.minDepth = .0f, // standard value
+		.maxDepth = 1.0f, // standard value
+	};
+	vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
+
+	VkRect2D scissor{
+		.offset = {0, 0},
+		.extent = swapChainExtent,
+	};
+	vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+
+	vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+
+	vkCmdEndRenderPass(commandBuffer);
+	if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
+		throw std::runtime_error("failed to record command buffer!");
 	}
 }
 
