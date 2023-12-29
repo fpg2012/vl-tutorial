@@ -75,6 +75,9 @@ private:
 	VkSurfaceKHR surface; // window surface exposed by VK_KHR_surface extension
 	VkQueue presentQueue;
 	VkSwapchainKHR swapChain;
+	std::vector<VkImage> swapChainImages;
+	VkFormat swapChainImageFormat;
+	VkExtent2D swapChainExtent;
 };
 
 void HelloTriangleApplication::run() {
@@ -456,6 +459,14 @@ void HelloTriangleApplication::createSwapChain()
 	if (vkCreateSwapchainKHR(device, &createInfo, nullptr, &swapChain) != VK_SUCCESS) {
 		throw std::runtime_error("failed to create swap chain!");
 	}
+
+	// retrieve images
+	vkGetSwapchainImagesKHR(device, swapChain, &imageCount, nullptr);
+	swapChainImages.resize(imageCount);
+	vkGetSwapchainImagesKHR(device, swapChain, &imageCount, swapChainImages.data());
+	// save surface formats and extent
+	swapChainImageFormat = surfaceFormat.format;
+	swapChainExtent = extent;
 }
 
 int main() {
