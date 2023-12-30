@@ -83,6 +83,7 @@ private:
 	void cleanupSwapChain();
 
 	static std::vector<char> readFile(const std::string& filename);
+	static void framebufferResizeCallback(GLFWwindow* window, int width, int height);
 
 	GLFWwindow* window;
 	VkInstance instance;
@@ -105,6 +106,7 @@ private:
 	std::vector<VkSemaphore> imageAvailableSemaphores;
 	std::vector<VkSemaphore> renderFinishedSemaphores;
 	std::vector<VkFence> inFlightFences;
+	bool framebufferResized = false;
 	uint32_t currentFrame = 0;
 };
 
@@ -172,6 +174,8 @@ void HelloTriangleApplication::initWindow() {
 	// glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
 	// create a window titled "vulkan"
 	window = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan", nullptr, nullptr);
+	glfwSetWindowUserPointer(window, this);
+	glfwSetFramebufferSizeCallback(window, &framebufferResizeCallback);
 }
 
 // init VkInstance, physical device and logical device
@@ -949,7 +953,8 @@ void HelloTriangleApplication::drawFrame()
 	};
 
 	result = vkQueuePresentKHR(presentQueue, &presentInfo);
-	if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
+	if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || framebufferResized) {
+		framebufferResized = false;
 		recreateSwapChain();
 	}
 	else if (result != VK_SUCCESS) {
@@ -984,6 +989,15 @@ void HelloTriangleApplication::createSyncObjects()
 
 void HelloTriangleApplication::recreateSwapChain()
 {
+	// handling minimization
+	int width = 0, height = 0;
+	glfwGetFramebufferSize(window, &width, &height);
+	while (width == 0 || height == 0) {
+		std::cout << "minimized" << std::endl;
+		glfwGetFramebufferSize(window, &width, &height);
+		glfwWaitEvents();
+	}
+
 	vkDeviceWaitIdle(device);
 
 	cleanupSwapChain();
@@ -1018,6 +1032,13 @@ std::vector<char> HelloTriangleApplication::readFile(const std::string& filename
 	file.close();
 
 	return buffer;
+}
+
+void HelloTriangleApplication::framebufferResizeCallback(GLFWwindow* window, int width, int height)
+{
+	std::cout << "resized" << std::endl;
+	auto app = reinterpret_cast<HelloTriangleApplication*>(glfwGetWindowUserPointer(window));
+	app->framebufferResized = true;
 }
 
 int main() {
