@@ -79,6 +79,8 @@ private:
 	void recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex);
 	void drawFrame();
 	void createSyncObjects();
+	void recreateSwapChain();
+	void cleanupSwapChain();
 
 	static std::vector<char> readFile(const std::string& filename);
 
@@ -130,6 +132,13 @@ void HelloTriangleApplication::initVulkan() {
 
 // a bunch of vkDestroy & vkFree functions
 void HelloTriangleApplication::cleanup() {
+	cleanupSwapChain();
+
+	vkDestroyPipeline(device, graphicsPipeline, nullptr);
+	vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
+
+	vkDestroyRenderPass(device, renderPass, nullptr);
+
 	for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
 		vkDestroySemaphore(device, imageAvailableSemaphores[i], nullptr);
 		vkDestroySemaphore(device, renderFinishedSemaphores[i], nullptr);
@@ -137,16 +146,7 @@ void HelloTriangleApplication::cleanup() {
 	}
 	
 	vkDestroyCommandPool(device, commandPool, nullptr);
-	for (auto framebuffer : swapChainFramebuffers) {
-		vkDestroyFramebuffer(device, framebuffer, nullptr);
-	}
-	vkDestroyPipeline(device, graphicsPipeline, nullptr);
-	vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
-	vkDestroyRenderPass(device, renderPass, nullptr);
-	for (auto imageView : swapChainImageViews) {
-		vkDestroyImageView(device, imageView, nullptr);
-	}
-	vkDestroySwapchainKHR(device, swapChain, nullptr);
+	
 	vkDestroyDevice(device, nullptr);
 	vkDestroySurfaceKHR(instance, surface, nullptr);
 	vkDestroyInstance(instance, nullptr);
@@ -169,7 +169,7 @@ void HelloTriangleApplication::initWindow() {
 	glfwInit();
 	std::cout << "vulkan support: " << (glfwVulkanSupported() ? "TRUE" : "FALSE") << std::endl;
 	glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-	glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+	// glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
 	// create a window titled "vulkan"
 	window = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan", nullptr, nullptr);
 }
@@ -893,11 +893,22 @@ void HelloTriangleApplication::drawFrame()
 	// 1. wait for previous frames
 	// takes an array of fences and waits on the host for either any or all of the fences to be signaled before returning
 	vkWaitForFences(device, 1, &inFlightFences[currentFrame], VK_TRUE, UINT64_MAX);
-	vkResetFences(device, 1, &inFlightFences[currentFrame]);
 
 	// 2. acquire an image from swapchain
 	uint32_t imageIndex;
-	vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
+	VkResult result = vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
+	if (result == VK_ERROR_OUT_OF_DATE_KHR) {
+		// out of date, just recreate it
+		recreateSwapChain();
+		return;
+	}
+	else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
+		// suboptimal is toleratable
+		throw std::runtime_error("failed to acquire swapchain image!");
+	}
+
+	// only reset when submitting the work
+	vkResetFences(device, 1, &inFlightFences[currentFrame]);
 
 	// 3. record the command buffer
 	vkResetCommandBuffer(commandBuffers[currentFrame], 0);
@@ -937,7 +948,13 @@ void HelloTriangleApplication::drawFrame()
 		.pResults = nullptr,
 	};
 
-	vkQueuePresentKHR(presentQueue, &presentInfo);
+	result = vkQueuePresentKHR(presentQueue, &presentInfo);
+	if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
+		recreateSwapChain();
+	}
+	else if (result != VK_SUCCESS) {
+		throw std::runtime_error("failed to present swapchain image");
+	}
 
 	// update `currentFrame`
 	currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
@@ -963,6 +980,28 @@ void HelloTriangleApplication::createSyncObjects()
 			throw std::runtime_error("failed to create semaphores or fences");
 		}
 	}
+}
+
+void HelloTriangleApplication::recreateSwapChain()
+{
+	vkDeviceWaitIdle(device);
+
+	cleanupSwapChain();
+
+	createSwapChain();
+	createImageViews();
+	createFramebuffers();
+}
+
+void HelloTriangleApplication::cleanupSwapChain()
+{
+	for (auto framebuffer : swapChainFramebuffers) {
+		vkDestroyFramebuffer(device, framebuffer, nullptr);
+	}
+	for (auto imageView : swapChainImageViews) {
+		vkDestroyImageView(device, imageView, nullptr);
+	}
+	vkDestroySwapchainKHR(device, swapChain, nullptr);
 }
 
 std::vector<char> HelloTriangleApplication::readFile(const std::string& filename)
