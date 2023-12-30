@@ -16,6 +16,7 @@
 const uint32_t WIDTH = 800; // width of the window
 const uint32_t HEIGHT = 600; // height of the window
 const int MAX_FRAMES_IN_FLIGHT = 2;
+const VkClearValue CLEAR_COLOR = { {{.0f, .1f, .1f, 1.0f}} };
 
 // validation layers to be used
 const std::vector<const char*> validationLayers = {
@@ -907,7 +908,7 @@ void HelloTriangleApplication::recordCommandBuffer(VkCommandBuffer commandBuffer
 		throw std::runtime_error("failed to begin recording command buffer!");
 	}
 
-	VkClearValue clearColor = { {{.0f, .0f, .0f, 1.0f}} };
+	VkClearValue clearColor = CLEAR_COLOR;
 	VkRenderPassBeginInfo renderPassInfo{
 		.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
 		.renderPass = renderPass,
