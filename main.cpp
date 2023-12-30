@@ -10,6 +10,8 @@
 #include <limits>
 #include <algorithm>
 #include <fstream>
+#include <array>
+#include <glm/glm.hpp>
 
 const uint32_t WIDTH = 800; // width of the window
 const uint32_t HEIGHT = 600; // height of the window
@@ -28,6 +30,50 @@ const bool enableValidationLayers = false;
 #else
 const bool enableValidationLayers = true;
 #endif
+
+struct Vertex {
+	glm::vec2 pos;
+	glm::vec3 color;
+
+	static VkVertexInputBindingDescription getBindingDescription() {
+		// All of our per-vertex data is packed together in one array,
+		// so we're only going to have one binding (index 0)
+		VkVertexInputBindingDescription bindingDesc{
+			.binding = 0, // index of the binding in the array of bindings
+			.stride = sizeof(Vertex), // the number of bytes from one entry to the next
+			.inputRate = VK_VERTEX_INPUT_RATE_VERTEX, // Move to the next data entry after each vertex
+		};
+
+		return bindingDesc;
+	}
+
+	static std::array<VkVertexInputAttributeDescription, 2> getAttributeDescriptions() {
+		std::array<VkVertexInputAttributeDescription, 2> attributeDesc{};
+		attributeDesc[0] = {
+			.location = 0, // the location directive of the input in the vertex shader
+			.binding = 0, // from which binding the per-vertex data comes
+			.format = VK_FORMAT_R32G32_SFLOAT, // the type of data for the attribute
+			.offset = offsetof(Vertex, pos),
+		};
+		attributeDesc[1] = {
+			.location = 1,
+			.binding = 0,
+			.format = VK_FORMAT_R32G32B32_SFLOAT,
+			.offset = offsetof(Vertex, color),
+		};
+		
+		return attributeDesc;
+	}
+};
+
+const std::vector<Vertex> vertices {
+	{{-.5f, -.5f}, { 1.0f, .0f, .0f }},
+	{ {.5f, -.5f}, {.0f, 1.0f, .0f} },
+	{ {-.5f, .5f}, {.0f, .0f, 1.0f} },
+	{ {-.5f, .5f}, {.0f, .0f, 1.0f} },
+	{ {.5f, -.5f}, {.0f, 1.0f, .0f} },
+	{ {.5f, .5f}, {1.0f, .0f, .0f} },
+};
 
 struct QueueFamilyIndices {
 	std::optional<uint32_t> graphicsFamily;
@@ -81,6 +127,8 @@ private:
 	void createSyncObjects();
 	void recreateSwapChain();
 	void cleanupSwapChain();
+	void createVertexBuffer();
+	uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
 
 	static std::vector<char> readFile(const std::string& filename);
 	static void framebufferResizeCallback(GLFWwindow* window, int width, int height);
@@ -106,6 +154,8 @@ private:
 	std::vector<VkSemaphore> imageAvailableSemaphores;
 	std::vector<VkSemaphore> renderFinishedSemaphores;
 	std::vector<VkFence> inFlightFences;
+	VkBuffer vertexBuffer;
+	VkDeviceMemory vertexBufferMemory;
 	bool framebufferResized = false;
 	uint32_t currentFrame = 0;
 };
@@ -128,6 +178,7 @@ void HelloTriangleApplication::initVulkan() {
 	createGraphicsPipeline();
 	createFramebuffers();
 	createCommandPool();
+	createVertexBuffer();
 	createCommandBuffers();
 	createSyncObjects();
 }
@@ -135,6 +186,9 @@ void HelloTriangleApplication::initVulkan() {
 // a bunch of vkDestroy & vkFree functions
 void HelloTriangleApplication::cleanup() {
 	cleanupSwapChain();
+
+	vkDestroyBuffer(device, vertexBuffer, nullptr);
+	vkFreeMemory(device, vertexBufferMemory, nullptr);
 
 	vkDestroyPipeline(device, graphicsPipeline, nullptr);
 	vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
@@ -597,13 +651,14 @@ void HelloTriangleApplication::createGraphicsPipeline()
 	};
 
 	// vertex input
-	// no input right now
+	auto bindingDescription = Vertex::getBindingDescription();
+	auto attributeDescription = Vertex::getAttributeDescriptions();
 	VkPipelineVertexInputStateCreateInfo vertexInputInfo{
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
-		.vertexBindingDescriptionCount = 0,
-		.pVertexBindingDescriptions = nullptr,
-		.vertexAttributeDescriptionCount = 0,
-		.pVertexAttributeDescriptions = nullptr,
+		.vertexBindingDescriptionCount = 1,
+		.pVertexBindingDescriptions = &bindingDescription,
+		.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescription.size()),
+		.pVertexAttributeDescriptions = attributeDescription.data(),
 	};
 
 	// input assembly
@@ -884,7 +939,13 @@ void HelloTriangleApplication::recordCommandBuffer(VkCommandBuffer commandBuffer
 	};
 	vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
-	vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+	// bind vertex buffer
+	vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+	VkBuffer vertexBuffers[] = {vertexBuffer};
+	VkDeviceSize offset[] = { 0 };
+	vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offset);
+
+	vkCmdDraw(commandBuffer, static_cast<uint32_t>(vertices.size()), 1, 0, 0);
 
 	vkCmdEndRenderPass(commandBuffer);
 	if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
@@ -1016,6 +1077,53 @@ void HelloTriangleApplication::cleanupSwapChain()
 		vkDestroyImageView(device, imageView, nullptr);
 	}
 	vkDestroySwapchainKHR(device, swapChain, nullptr);
+}
+
+void HelloTriangleApplication::createVertexBuffer()
+{
+	VkBufferCreateInfo bufferInfo{
+		.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+		.size = sizeof(vertices[0]) * vertices.size(), // in terms of bytes
+		.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, // purpose of buffer
+		.sharingMode = VK_SHARING_MODE_EXCLUSIVE, // only used by graphics queue
+	};
+
+	if (vkCreateBuffer(device, &bufferInfo, nullptr, &vertexBuffer) != VK_SUCCESS) {
+		throw std::runtime_error("failed to create vertex buffer!");
+	}
+
+	VkMemoryRequirements memRequirements;
+	vkGetBufferMemoryRequirements(device, vertexBuffer, &memRequirements);
+	VkMemoryAllocateInfo allocInfo{
+		.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+		.allocationSize = memRequirements.size,
+		.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)
+	};
+	if (vkAllocateMemory(device, &allocInfo, nullptr, &vertexBufferMemory) != VK_SUCCESS) {
+		throw std::runtime_error("failed to allocate vertex buffer memory");
+	}
+	vkBindBufferMemory(device, vertexBuffer, vertexBufferMemory, 0);
+
+	// fill the data
+	// map the buffer memory into CPU accessible memory
+	void* data;
+	vkMapMemory(device, vertexBufferMemory, 0, bufferInfo.size, 0, &data);
+	memcpy(data, vertices.data(), static_cast<size_t>(bufferInfo.size)); // copy the data into the mapped memory
+	vkUnmapMemory(device, vertexBufferMemory);
+}
+
+uint32_t HelloTriangleApplication::findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties)
+{
+	VkPhysicalDeviceMemoryProperties memProperties;
+	vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProperties);
+	for (uint32_t i = 0; i < memProperties.memoryTypeCount; ++i) {
+		if ((typeFilter & (1 << i))
+			&& memProperties.memoryTypes[i].propertyFlags == properties
+			) {
+			return i;
+		}
+	}
+	throw std::runtime_error("failed to find suitable memory type");
 }
 
 std::vector<char> HelloTriangleApplication::readFile(const std::string& filename)
