@@ -1192,6 +1192,15 @@ void HelloTriangleApplication::copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer
 	};
 	vkCmdCopyBuffer(commandBuffer, srcBuffer, dstBuffer, 1, &copyRegion);
 	vkEndCommandBuffer(commandBuffer);
+
+	// create a fence
+	VkFenceCreateInfo fenceCreateInfo{
+		.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+		.pNext = nullptr,
+		.flags = 0,
+	};
+	VkFence fence;
+	vkCreateFence(device, &fenceCreateInfo, nullptr, &fence);
 	
 	// submit the command buffer
 	VkSubmitInfo submitInfo{
@@ -1199,10 +1208,11 @@ void HelloTriangleApplication::copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer
 		.commandBufferCount = 1,
 		.pCommandBuffers = &commandBuffer,
 	};
-	vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
-	vkQueueWaitIdle(graphicsQueue); // it may be better to use a fence
+	vkQueueSubmit(graphicsQueue, 1, &submitInfo, fence);
+	vkWaitForFences(device, 1, &fence, VK_FALSE, UINT64_MAX);
 	
 	vkFreeCommandBuffers(device, commandPool, 1, &commandBuffer);
+	vkDestroyFence(device, fence, nullptr);
 }
 
 std::vector<char> HelloTriangleApplication::readFile(const std::string& filename)
