@@ -129,7 +129,9 @@ private:
 	void recreateSwapChain();
 	void cleanupSwapChain();
 	void createVertexBuffer();
+	void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory);
 	uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties);
+	void copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size);
 
 	static std::vector<char> readFile(const std::string& filename);
 	static void framebufferResizeCallback(GLFWwindow* window, int width, int height);
@@ -1014,6 +1016,7 @@ void HelloTriangleApplication::drawFrame()
 		.pResults = nullptr,
 	};
 
+	// submits the request to present an image to the swap chain
 	result = vkQueuePresentKHR(presentQueue, &presentInfo);
 	if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || framebufferResized) {
 		framebufferResized = false;
@@ -1082,35 +1085,65 @@ void HelloTriangleApplication::cleanupSwapChain()
 
 void HelloTriangleApplication::createVertexBuffer()
 {
-	VkBufferCreateInfo bufferInfo{
-		.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-		.size = sizeof(vertices[0]) * vertices.size(), // in terms of bytes
-		.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, // purpose of buffer
-		.sharingMode = VK_SHARING_MODE_EXCLUSIVE, // only used by graphics queue
-	};
-
-	if (vkCreateBuffer(device, &bufferInfo, nullptr, &vertexBuffer) != VK_SUCCESS) {
-		throw std::runtime_error("failed to create vertex buffer!");
-	}
-
-	VkMemoryRequirements memRequirements;
-	vkGetBufferMemoryRequirements(device, vertexBuffer, &memRequirements);
-	VkMemoryAllocateInfo allocInfo{
-		.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
-		.allocationSize = memRequirements.size,
-		.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)
-	};
-	if (vkAllocateMemory(device, &allocInfo, nullptr, &vertexBufferMemory) != VK_SUCCESS) {
-		throw std::runtime_error("failed to allocate vertex buffer memory");
-	}
-	vkBindBufferMemory(device, vertexBuffer, vertexBufferMemory, 0);
+	VkDeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
+	// staging buffer
+	VkBuffer stagingBuffer;
+	VkDeviceMemory stagingBufferMemory;
+	createBuffer(bufferSize, 
+		// buffer can be used as source vertex buffer
+		VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, 
+		VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 
+		stagingBuffer, 
+		stagingBufferMemory
+	);
 
 	// fill the data
 	// map the buffer memory into CPU accessible memory
 	void* data;
-	vkMapMemory(device, vertexBufferMemory, 0, bufferInfo.size, 0, &data);
-	memcpy(data, vertices.data(), static_cast<size_t>(bufferInfo.size)); // copy the data into the mapped memory
-	vkUnmapMemory(device, vertexBufferMemory);
+	vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
+	memcpy(data, vertices.data(), static_cast<size_t>(bufferSize)); // copy the data into the mapped memory
+	vkUnmapMemory(device, stagingBufferMemory);
+
+	// real vertex buffer
+	createBuffer(bufferSize,
+		// buffer can be used as destination vertex buffer
+		VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+		// use device local memory for optimal performance
+		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+		vertexBuffer,
+		vertexBufferMemory
+	);
+
+	copyBuffer(stagingBuffer, vertexBuffer, bufferSize);
+
+	vkDestroyBuffer(device, stagingBuffer, nullptr);
+	vkFreeMemory(device, stagingBufferMemory, nullptr);
+}
+
+void HelloTriangleApplication::createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory)
+{
+	VkBufferCreateInfo bufferInfo{
+		.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+		.size = size, // in terms of bytes
+		.usage = usage, // purpose of buffer
+		.sharingMode = VK_SHARING_MODE_EXCLUSIVE, // only used by graphics queue
+	};
+
+	if (vkCreateBuffer(device, &bufferInfo, nullptr, &buffer) != VK_SUCCESS) {
+		throw std::runtime_error("failed to create buffer!");
+	}
+
+	VkMemoryRequirements memRequirements;
+	vkGetBufferMemoryRequirements(device, buffer, &memRequirements);
+	VkMemoryAllocateInfo allocInfo{
+		.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+		.allocationSize = memRequirements.size,
+		.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties),
+	};
+	if (vkAllocateMemory(device, &allocInfo, nullptr, &bufferMemory) != VK_SUCCESS) {
+		throw std::runtime_error("failed to allocate buffer memory");
+	}
+	vkBindBufferMemory(device, buffer, bufferMemory, 0);
 }
 
 uint32_t HelloTriangleApplication::findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties)
@@ -1125,6 +1158,51 @@ uint32_t HelloTriangleApplication::findMemoryType(uint32_t typeFilter, VkMemoryP
 		}
 	}
 	throw std::runtime_error("failed to find suitable memory type");
+}
+
+void HelloTriangleApplication::copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size)
+{
+	/* Note: 
+	 *  It is better to create a seperate command pool with VK_COMMAND_POOL_CREATE_TRANSIENT_BIT
+	 *  for such short-lived buffers which may result in a better performance¡£ */
+
+	// Memory transfer operations are executed using command buffers
+	// allocate a temporary command buffer
+	VkCommandBufferAllocateInfo allocInfo{
+		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+		.commandPool = commandPool,
+		.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+		.commandBufferCount = 1,
+	};
+	VkCommandBuffer commandBuffer;
+	vkAllocateCommandBuffers(device, &allocInfo, &commandBuffer);
+
+	// record the command buffer
+	VkCommandBufferBeginInfo beginInfo{
+		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+		// The command buffer will be rerecorded right after executing it once
+		.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+	};
+	vkBeginCommandBuffer(commandBuffer, &beginInfo);
+
+	VkBufferCopy copyRegion{
+		.srcOffset = 0,
+		.dstOffset = 0,
+		.size = size,
+	};
+	vkCmdCopyBuffer(commandBuffer, srcBuffer, dstBuffer, 1, &copyRegion);
+	vkEndCommandBuffer(commandBuffer);
+	
+	// submit the command buffer
+	VkSubmitInfo submitInfo{
+		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+		.commandBufferCount = 1,
+		.pCommandBuffers = &commandBuffer,
+	};
+	vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
+	vkQueueWaitIdle(graphicsQueue); // it may be better to use a fence
+	
+	vkFreeCommandBuffers(device, commandPool, 1, &commandBuffer);
 }
 
 std::vector<char> HelloTriangleApplication::readFile(const std::string& filename)
