@@ -11,9 +11,10 @@
 #include <algorithm>
 #include <fstream>
 #include <array>
+#include <numbers>
 #include <glm/glm.hpp>
 
-const uint32_t WIDTH = 800; // width of the window
+const uint32_t WIDTH = 600; // width of the window
 const uint32_t HEIGHT = 600; // height of the window
 const int MAX_FRAMES_IN_FLIGHT = 2;
 const VkClearValue CLEAR_COLOR = { {{.0f, .1f, .1f, 1.0f}} };
@@ -67,14 +68,14 @@ struct Vertex {
 	}
 };
 
-const std::vector<Vertex> vertices {
+std::vector<Vertex> vertices {
 	{{-.5f, -.5f}, { 1.0f, .0f, .0f }},
 	{ {.5f, -.5f}, {.0f, 1.0f, .0f} },
 	{ {-.5f, .5f}, {.0f, .0f, 1.0f} },
 	{ {.5f, .5f}, {1.0f, .0f, .0f} },
 };
 
-const std::vector<uint16_t> indices = {
+std::vector<uint16_t> indices = {
 	0, 1, 2, 2, 1, 3
 };
 
@@ -424,7 +425,9 @@ void HelloTriangleApplication::createLogicalDevice() {
 	}
 
 	// requires no special features
-	VkPhysicalDeviceFeatures deviceFeatures{};
+	VkPhysicalDeviceFeatures deviceFeatures{
+		.fillModeNonSolid = VK_TRUE
+	};
 
 	VkDeviceCreateInfo createInfo{
 		.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
@@ -1283,7 +1286,24 @@ void HelloTriangleApplication::framebufferResizeCallback(GLFWwindow* window, int
 	app->framebufferResized = true;
 }
 
+void drawPolygon(Vertex center, int sides = 3, float radius = .5f) {
+	vertices.clear();
+	indices.clear();
+	int M = sides;
+	// Vertex center{ {.0f, .0f}, {1.0f, 1.0f, 1.0f} };
+	vertices.push_back(center);
+	for (int i = 0; i < M; ++i) {
+		float theta = 2 * std::numbers::pi / M * i;
+		float x = cosf(theta) * radius + center.pos.x;
+		float y = sinf(theta) * radius + center.pos.y;
+		Vertex p{ {x, y}, center.color };
+		vertices.push_back(p);
+		indices.push_back(0); indices.push_back(i + 1); indices.push_back((i + 1) % M + 1);
+	}
+}
+
 int main() {
+	drawPolygon({ {.1f, .1f}, {.9f, .3f, .1f} }, 5, .5f);
 	HelloTriangleApplication app;
 
 	try {
