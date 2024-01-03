@@ -42,7 +42,7 @@ const bool enableValidationLayers = true;
 #endif
 
 struct Vertex {
-	glm::vec2 pos;
+	glm::vec3 pos;
 	glm::vec3 color;
 	glm::vec2 texCoord;
 
@@ -63,7 +63,7 @@ struct Vertex {
 		attributeDesc[0] = {
 			.location = 0, // the location directive of the input in the vertex shader
 			.binding = 0, // from which binding the per-vertex data comes
-			.format = VK_FORMAT_R32G32_SFLOAT, // the type of data for the attribute
+			.format = VK_FORMAT_R32G32B32_SFLOAT, // the type of data for the attribute
 			.offset = offsetof(Vertex, pos),
 		};
 		attributeDesc[1] = {
@@ -90,14 +90,20 @@ struct UniformBufferObject {
 };
 
 std::vector<Vertex> vertices {
-	{{-.5f, -.5f}, { 1.0f, .0f, .0f }, { .0f, 1.0f }},
-	{ {.5f, -.5f}, {.0f, 1.0f, .0f}, {1.0f, 1.0f} },
-	{ {-.5f, .5f}, {.0f, .0f, 1.0f}, {.0f, .0f} },
-	{ {.5f, .5f}, {1.0f, 1.0f, .0f}, {1.0f, .0f} },
+	{{-.5f, -.5f, .0f}, { 1.0f, .0f, .0f }, { .0f, 1.0f }},
+	{ {.5f, -.5f, .0f}, {.0f, 1.0f, .0f}, {1.0f, 1.0f} },
+	{ {-.5f, .5f, .0f}, {.0f, .0f, 1.0f}, {.0f, .0f} },
+	{ {.5f, .5f, .0f}, {1.0f, 1.0f, .0f}, {1.0f, .0f} },
+
+	{ {-.5f, -.5f, -.5f}, { 1.0f, .0f, .0f }, { .0f, 1.0f } },
+	{ {.5f, -.5f, -.5f}, {.0f, 1.0f, .0f}, {1.0f, 1.0f} },
+	{ {-.5f, .5f, -.5f}, {.0f, .0f, 1.0f}, {.0f, .0f} },
+	{ {.5f, .5f, -.5f}, {1.0f, 1.0f, .0f}, {1.0f, .0f} },
 };
 
 std::vector<uint16_t> indices = {
-	0, 1, 2, 2, 1, 3
+	0, 1, 2, 2, 1, 3,
+	4, 5, 6, 6 ,5, 7,
 };
 
 struct QueueFamilyIndices {
@@ -1812,7 +1818,7 @@ void drawPolygon(Vertex center, int sides = 3, float radius = .5f) {
 		float theta = 2 * std::numbers::pi / M * i;
 		float x = cosf(theta) * radius + center.pos.x;
 		float y = sinf(theta) * radius + center.pos.y;
-		Vertex p{ {x, y}, center.color };
+		Vertex p{ {x, y, .0f}, center.color };
 		vertices.push_back(p);
 		indices.push_back(0); indices.push_back(i + 1); indices.push_back((i + 1) % M + 1);
 	}
