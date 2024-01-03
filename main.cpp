@@ -2,6 +2,7 @@
 #include <GLFW/glfw3.h>
 
 #define GLM_FORCE_RADIANS
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -26,6 +27,10 @@ const uint32_t WIDTH = 600; // width of the window
 const uint32_t HEIGHT = 600; // height of the window
 const int MAX_FRAMES_IN_FLIGHT = 2;
 const VkClearValue CLEAR_COLOR = { {{.0f, .1f, .1f, 1.0f}} };
+const VkClearValue CLEAR_DEPTH = { 1.0f, 0 }; // 1.0f => far, 0 => near
+// "textures/texture.jpg"
+// "textures/cube.png"
+const char* TEXTURE_FILE = "textures/cube.png";
 
 // validation layers to be used
 const std::vector<const char*> validationLayers = {
@@ -175,8 +180,11 @@ private:
 	void transitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout);
 	void copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height);
 	void createTextureImageView();
-	VkImageView createImageView(VkImage image, VkFormat format);
+	VkImageView createImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlags);
 	void createTextureSampler();
+	void createDepthResources();
+	VkFormat findSupportedFormat(const std::vector<VkFormat>& candidates, VkImageTiling tiling, VkFormatFeatureFlags features);
+	VkFormat findDepthFormat();
 
 	static std::vector<char> readFile(const std::string& filename);
 	static void framebufferResizeCallback(GLFWwindow* window, int width, int height);
@@ -216,6 +224,10 @@ private:
 	VkDeviceMemory textureImageMemory;
 	VkImageView textureImageView;
 	VkSampler textureSampler;
+	VkImage depthImage;
+	VkDeviceMemory depthImageMemory;
+	VkImageView depthImageView;
+	bool hasStencilComponent(VkFormat format);
 
 	bool framebufferResized = false;
 	uint32_t currentFrame = 0;
@@ -243,12 +255,14 @@ void HelloTriangleApplication::initVulkan() {
 
 	createGraphicsPipeline();
 
-	createFramebuffers();
 	createCommandPool();
 
+	createDepthResources();
 	createTextureImage();
 	createTextureImageView();
 	createTextureSampler();
+
+	createFramebuffers();
 
 	createVertexBuffer();
 	createIndexBuffer();
@@ -845,6 +859,20 @@ void HelloTriangleApplication::createGraphicsPipeline()
 		.pAttachments = &colorBlendAttachment,
 	};
 
+	// depth-stencil state
+	VkPipelineDepthStencilStateCreateInfo depthStencil{
+		.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+		.depthTestEnable = VK_TRUE,
+		.depthWriteEnable = VK_TRUE,
+		.depthCompareOp = VK_COMPARE_OP_LESS,
+		.depthBoundsTestEnable = VK_FALSE,
+		.stencilTestEnable = VK_FALSE,
+		.minDepthBounds = 0.0f, // Optional,
+		.maxDepthBounds = 1.0f, // Optional
+	};
+
+	// pipeline layout
+
 	VkPipelineLayoutCreateInfo pipelineLayoutInfo{
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
 		.setLayoutCount = 1, // #descriptor sets
@@ -866,7 +894,7 @@ void HelloTriangleApplication::createGraphicsPipeline()
 		.pViewportState = &viewportState,
 		.pRasterizationState = &rasterizer,
 		.pMultisampleState = &multisampling,
-		.pDepthStencilState = nullptr,
+		.pDepthStencilState = &depthStencil,
 		.pColorBlendState = &colorBlending,
 		.pDynamicState = &dynamicState,
 		.layout = pipelineLayout,
@@ -913,32 +941,52 @@ void HelloTriangleApplication::createRenderPass()
 		.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED, // which layout the image will have before the render pass
 		.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, // the layout to automatically transition to when the render pass finishes
 	};
-
 	VkAttachmentReference colorAttachmentRef{
 		.attachment = 0, // the first attachment
 		.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+	};
+
+	VkAttachmentDescription depthAttachment{
+		.format = findDepthFormat(),
+		.samples = VK_SAMPLE_COUNT_1_BIT,
+		.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+		.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+		.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+		.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+		.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+		.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+	};
+	VkAttachmentReference depthAttachmentRef{
+		.attachment = 1,
+		.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
 	};
 
 	VkSubpassDescription subpass{
 		.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
 		.colorAttachmentCount = 1,
 		.pColorAttachments = &colorAttachmentRef,
+		.pDepthStencilAttachment = &depthAttachmentRef, // can only use a single depth attachment
+	};
+
+	std::array<VkAttachmentDescription, 2> attachments = {
+		colorAttachment,
+		depthAttachment,
 	};
 
 	// ensure the implicit transition stage happens after we acquired the image
 	VkSubpassDependency dependency{
 		.srcSubpass = VK_SUBPASS_EXTERNAL, // the implicit subpass before or after the render pass
 		.dstSubpass = 0, // our subpass
-		.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-		.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+		.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
+		.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
 		.srcAccessMask = 0,
-		.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+		.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
 	};
 
 	VkRenderPassCreateInfo renderPassInfo{
 		.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
-		.attachmentCount = 1,
-		.pAttachments = &colorAttachment,
+		.attachmentCount = attachments.size(),
+		.pAttachments = attachments.data(),
 		.subpassCount = 1,
 		.pSubpasses = &subpass,
 		.dependencyCount = 1,
@@ -953,15 +1001,16 @@ void HelloTriangleApplication::createFramebuffers()
 {
 	swapChainFramebuffers.resize(swapChainImageViews.size());
 	for (size_t i = 0; i < swapChainImageViews.size(); ++i) {
-		VkImageView attachments[] = {
+		std::array<VkImageView, 2> attachments = {
 			swapChainImageViews[i],
+			depthImageView,
 		};
 
 		VkFramebufferCreateInfo framebufferInfo{
 			.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
 			.renderPass = renderPass,
-			.attachmentCount = 1,
-			.pAttachments = attachments,
+			.attachmentCount = attachments.size(),
+			.pAttachments = attachments.data(),
 			.width = swapChainExtent.width,
 			.height = swapChainExtent.height,
 			.layers = 1,
@@ -1015,7 +1064,7 @@ void HelloTriangleApplication::recordCommandBuffer(VkCommandBuffer commandBuffer
 		throw std::runtime_error("failed to begin recording command buffer!");
 	}
 
-	VkClearValue clearColor = CLEAR_COLOR;
+	std::array<VkClearValue, 2> clearColors = { CLEAR_COLOR, CLEAR_DEPTH };
 	VkRenderPassBeginInfo renderPassInfo{
 		.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
 		.renderPass = renderPass,
@@ -1024,8 +1073,8 @@ void HelloTriangleApplication::recordCommandBuffer(VkCommandBuffer commandBuffer
 			.offset = {0, 0},
 			.extent = swapChainExtent,
 		},
-		.clearValueCount = 1,
-		.pClearValues = &clearColor,
+		.clearValueCount = clearColors.size(),
+		.pClearValues = clearColors.data(),
 	};
 
 	vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
@@ -1195,11 +1244,15 @@ void HelloTriangleApplication::recreateSwapChain()
 
 	createSwapChain();
 	createImageViews();
+	createDepthResources();
 	createFramebuffers();
 }
 
 void HelloTriangleApplication::cleanupSwapChain()
 {
+	vkDestroyImageView(device, depthImageView, nullptr);
+	vkDestroyImage(device, depthImage, nullptr);
+	vkFreeMemory(device, depthImageMemory, nullptr);
 	for (auto framebuffer : swapChainFramebuffers) {
 		vkDestroyFramebuffer(device, framebuffer, nullptr);
 	}
@@ -1498,7 +1551,7 @@ void HelloTriangleApplication::createTextureImage()
 {
 	// read texture image from file
 	int texWidth, texHeight, texChannels;
-	stbi_uc* pixels = stbi_load("textures/texture.jpg", &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+	stbi_uc* pixels = stbi_load(TEXTURE_FILE, &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
 	VkDeviceSize imageSize = static_cast<VkDeviceSize>(texWidth) * texHeight * 4; // 4 bytes per pixel
 	if (!pixels) {
 		throw std::runtime_error("failed to load texture image!");
@@ -1730,10 +1783,10 @@ void HelloTriangleApplication::copyBufferToImage(VkBuffer buffer, VkImage image,
 
 void HelloTriangleApplication::createTextureImageView()
 {
-	textureImageView = createImageView(textureImage, VK_FORMAT_R8G8B8A8_SRGB);
+	textureImageView = createImageView(textureImage, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT);
 }
 
-VkImageView HelloTriangleApplication::createImageView(VkImage image, VkFormat format)
+VkImageView HelloTriangleApplication::createImageView(VkImage image, VkFormat format, VkImageAspectFlags aspectFlags)
 {
 	VkImageViewCreateInfo viewInfo{
 		.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
@@ -1741,7 +1794,7 @@ VkImageView HelloTriangleApplication::createImageView(VkImage image, VkFormat fo
 		.viewType = VK_IMAGE_VIEW_TYPE_2D,
 		.format = format,
 		.subresourceRange = {
-			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+			.aspectMask = aspectFlags,
 			.baseMipLevel = 0,
 			.levelCount = 1,
 			.baseArrayLayer = 0,
@@ -1785,6 +1838,53 @@ void HelloTriangleApplication::createTextureSampler()
 	}
 }
 
+void HelloTriangleApplication::createDepthResources()
+{
+	VkFormat depthFormat = findDepthFormat();
+	createImage(
+		swapChainExtent.width, swapChainExtent.height,
+		depthFormat,
+		VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+		depthImage, depthImageMemory
+	);
+	depthImageView = createImageView(depthImage, depthFormat, VK_IMAGE_ASPECT_DEPTH_BIT);
+	// We don't need to explicitly transition the layout of the image to a depth attachment
+	// because we'll take care of this in the render pass
+	// 
+	// transitionImageLayout(depthImage, depthFormat, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+}
+
+VkFormat HelloTriangleApplication::findSupportedFormat(const std::vector<VkFormat>& candidates, VkImageTiling tiling, VkFormatFeatureFlags features)
+{
+	for (auto format : candidates) {
+		VkFormatProperties props;
+		vkGetPhysicalDeviceFormatProperties(physicalDevice, format, &props);
+
+		if (tiling == VK_IMAGE_TILING_LINEAR
+			&& (props.linearTilingFeatures & features) == features
+			) {
+			return format;
+		}
+		else if (tiling == VK_IMAGE_TILING_OPTIMAL
+			&& (props.optimalTilingFeatures & features) == features
+			) {
+			return format;
+		}
+	}
+	throw std::runtime_error("failed to find supported format!");
+}
+
+VkFormat HelloTriangleApplication::findDepthFormat()
+{
+	return findSupportedFormat(
+		// `D` means Depth, `S` means Stencil
+		{VK_FORMAT_D32_SFLOAT, VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT},
+		VK_IMAGE_TILING_OPTIMAL,
+		VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT
+	);
+}
+
 std::vector<char> HelloTriangleApplication::readFile(const std::string& filename)
 {
 	// ate: start reading from the end of the file
@@ -1808,6 +1908,12 @@ void HelloTriangleApplication::framebufferResizeCallback(GLFWwindow* window, int
 	app->framebufferResized = true;
 }
 
+bool HelloTriangleApplication::hasStencilComponent(VkFormat format)
+{
+	return format == VK_FORMAT_D32_SFLOAT_S8_UINT
+		|| format == VK_FORMAT_D24_UNORM_S8_UINT;
+}
+
 void drawPolygon(Vertex center, int sides = 3, float radius = .5f) {
 	vertices.clear();
 	indices.clear();
@@ -1818,14 +1924,52 @@ void drawPolygon(Vertex center, int sides = 3, float radius = .5f) {
 		float theta = 2 * std::numbers::pi / M * i;
 		float x = cosf(theta) * radius + center.pos.x;
 		float y = sinf(theta) * radius + center.pos.y;
-		Vertex p{ {x, y, .0f}, center.color };
+		float tx = cosf(theta) / 2 + .5f;
+		float ty = sinf(theta) / 2 + .5f;
+		Vertex p{ {x, y, .0f}, center.color, {tx, ty} };
 		vertices.push_back(p);
 		indices.push_back(0); indices.push_back(i + 1); indices.push_back((i + 1) % M + 1);
 	}
 }
 
+void drawCube(float a) {
+	vertices.clear();
+	indices.clear();
+	std::vector<Vertex> cubeVertices = {
+		{ {.0f, .0f, .0f}, {.0f, .0f, .0f}, {.0f, 1.0f/3}, },
+		{ {a, .0f, .0f}, {.0f, .0f, .0f}, {1.0f/4, 1.0f/3}, },
+		{ {a, a, .0f}, {.0f, .0f, .0f}, {1.0f/4, 1.0f/3*2}, },
+		{ {.0f, a, .0f}, {.0f, .0f, .0f}, {.0f, 1.0f/3*2}, },
+
+		{ {.0f, .0f, a}, {.0f, .0f, .0f}, {1.0f/4*3, 1.0f/3}, },
+		{ {a, .0f, a}, {.0f, .0f, .0f}, {1.0f/2, 1.0f/3}, },
+		{ {a, a, a}, {.0f, .0f, .0f}, {1.0f/2, 1.0f/3*2}, },
+		{ {.0f, a, a}, {.0f, .0f, .0f}, {1.0f/4*3, 1.0f/3*2}, },
+
+		{ {a, .0f, .0f}, {.0f, .0f, .0f}, {1.0f / 2, .0f}, }, // 1' = 8
+		{ {.0f, .0f, .0f}, {.0f, .0f, .0f}, {1.0f/4*3, .0f}, }, // 0' = 9
+		{ {a, a, .0f}, {.0f, .0f, .0f}, {1.0f / 2, 1.0f}, }, // 2' = 10
+		{ {.0f, a, .0f}, {.0f, .0f, .0f}, {1.0f/4*3, 1.0f}, }, // 3' = 11
+
+		{ {.0f, .0f, .0f}, {.0f, .0f, .0f}, {1.0f, 1.0f / 3}, }, // 0'' = 12
+		{ {.0f, a, .0f}, {.0f, .0f, .0f}, {1.0f, 1.0f / 3 * 2}, }, // 3' = 13
+	};
+	std::vector<uint16_t> cubeIndices = {
+		0, 1, 2, 0, 2, 3,
+		1, 5, 6, 1, 6, 2,
+		5, 4, 7, 5, 7, 6,
+		4, 12, 13, 4, 13, 7,
+		8, 9, 4, 8, 4, 5,
+		6, 7, 11, 6, 11, 10,
+	};
+
+	vertices = cubeVertices;
+	indices = cubeIndices;
+}
+
 int main() {
-	// drawPolygon({ {.0f, .0f}, {.9f, .3f, .1f} }, 5, .5f);
+	// drawPolygon({ {.0f, .0f, .0f}, {.9f, .3f, .1f}, {.5f, .5f } }, 5, .5f);
+	drawCube(.75f);
 	HelloTriangleApplication app;
 
 	try {
