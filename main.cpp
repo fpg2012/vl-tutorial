@@ -3,11 +3,16 @@
 
 #define GLM_FORCE_RADIANS
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
+#define GLM_ENABLE_EXPERIMENTAL
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtx/hash.hpp>
 
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
+
+#define TINYOBJLOADER_IMPLEMENTATION
+#include <tiny_obj_loader.h>
 
 #include <iostream>
 #include <stdexcept>
@@ -22,6 +27,7 @@
 #include <array>
 #include <numbers>
 #include <chrono>
+#include <unordered_map>
 
 const uint32_t WIDTH = 600; // width of the window
 const uint32_t HEIGHT = 600; // height of the window
@@ -30,7 +36,9 @@ const VkClearValue CLEAR_COLOR = { {{.0f, .1f, .1f, 1.0f}} };
 const VkClearValue CLEAR_DEPTH = { 1.0f, 0 }; // 1.0f => far, 0 => near
 // "textures/texture.jpg"
 // "textures/cube.png"
-const char* TEXTURE_FILE = "textures/cube.png";
+// "textures/viking_room.png"
+const char* TEXTURE_FILE = "textures/viking_room.png";
+const std::string MODEL_PATH = "models/viking_room.obj";
 
 // validation layers to be used
 const std::vector<const char*> validationLayers = {
@@ -86,29 +94,26 @@ struct Vertex {
 		
 		return attributeDesc;
 	}
+
+	bool operator==(const Vertex& other) const {
+		return pos == other.pos && color == other.color && texCoord == other.texCoord;
+	}
 };
+
+namespace std {
+	template<> struct hash<Vertex> {
+		size_t operator()(Vertex const& vertex) const {
+			return ((hash<glm::vec3>()(vertex.pos) ^
+				(hash<glm::vec3>()(vertex.color) << 1)) >> 1) ^
+				(hash<glm::vec2>()(vertex.texCoord) << 1);
+		}
+	};
+}
 
 struct UniformBufferObject {
 	glm::mat4 model;
 	glm::mat4 view;
 	glm::mat4 proj;
-};
-
-std::vector<Vertex> vertices {
-	{{-.5f, -.5f, .0f}, { 1.0f, .0f, .0f }, { .0f, 1.0f }},
-	{ {.5f, -.5f, .0f}, {.0f, 1.0f, .0f}, {1.0f, 1.0f} },
-	{ {-.5f, .5f, .0f}, {.0f, .0f, 1.0f}, {.0f, .0f} },
-	{ {.5f, .5f, .0f}, {1.0f, 1.0f, .0f}, {1.0f, .0f} },
-
-	{ {-.5f, -.5f, -.5f}, { 1.0f, .0f, .0f }, { .0f, 1.0f } },
-	{ {.5f, -.5f, -.5f}, {.0f, 1.0f, .0f}, {1.0f, 1.0f} },
-	{ {-.5f, .5f, -.5f}, {.0f, .0f, 1.0f}, {.0f, .0f} },
-	{ {.5f, .5f, -.5f}, {1.0f, 1.0f, .0f}, {1.0f, .0f} },
-};
-
-std::vector<uint16_t> indices = {
-	0, 1, 2, 2, 1, 3,
-	4, 5, 6, 6 ,5, 7,
 };
 
 struct QueueFamilyIndices {
@@ -185,6 +190,7 @@ private:
 	void createDepthResources();
 	VkFormat findSupportedFormat(const std::vector<VkFormat>& candidates, VkImageTiling tiling, VkFormatFeatureFlags features);
 	VkFormat findDepthFormat();
+	void loadModel();
 
 	static std::vector<char> readFile(const std::string& filename);
 	static void framebufferResizeCallback(GLFWwindow* window, int width, int height);
@@ -211,6 +217,8 @@ private:
 	std::vector<VkSemaphore> imageAvailableSemaphores;
 	std::vector<VkSemaphore> renderFinishedSemaphores;
 	std::vector<VkFence> inFlightFences;
+	std::vector<Vertex> vertices;
+	std::vector<uint16_t> indices;
 	VkBuffer vertexBuffer;
 	VkDeviceMemory vertexBufferMemory;
 	VkBuffer indexBuffer;
@@ -235,6 +243,7 @@ private:
 
 void HelloTriangleApplication::run() {
 	initWindow(); // init window with GLFW
+	loadModel();
 	initVulkan(); // init VkInstance, physical device and logical device
 	mainLoop();
 	cleanup();
@@ -1454,9 +1463,7 @@ void HelloTriangleApplication::updateUniformBuffer(uint32_t currentImage)
 	float time = chrono::duration<float, chrono::seconds::period>(currentTime - startTime).count();
 
 	UniformBufferObject ubo{
-		.model = glm::translate(glm::mat4(1.0f), glm::vec3(glm::cos(time / std::numbers::pi)/2, glm::sin(time)/2, glm::cos(time / std::numbers::pi) / 4))
-			     * glm::rotate(glm::mat4(1.0f), time * glm::radians(45.0f), glm::vec3(.0f, 1.0f, .0f))
-				 * glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(.0f, .0f, 1.0f)),
+		.model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(.0f, .0f, 1.0f)),
 		.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(.0f, .0f, .0f), glm::vec3(.0f, .0f, 1.0f)),
 		.proj = glm::perspective(glm::radians(45.0f), swapChainExtent.width / static_cast<float>(swapChainExtent.height), 0.1f, 10.0f),
 	};
@@ -1885,6 +1892,42 @@ VkFormat HelloTriangleApplication::findDepthFormat()
 	);
 }
 
+void HelloTriangleApplication::loadModel()
+{
+	tinyobj::attrib_t attrib;
+	std::vector<tinyobj::shape_t> shapes;
+	std::vector<tinyobj::material_t> materials;
+	std::string warn, err;
+	if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, MODEL_PATH.c_str())) {
+		throw std::runtime_error(warn + err);
+	}
+
+	std::unordered_map<Vertex, uint32_t> uniqueVertices;
+
+	for (const auto& shape : shapes) {
+		for (const auto& index : shape.mesh.indices) {
+			Vertex v{
+				.pos = {
+					attrib.vertices[3 * index.vertex_index + 0],
+					attrib.vertices[3 * index.vertex_index + 1],
+					attrib.vertices[3 * index.vertex_index + 2],
+				},
+				.color = { 1.0f, 1.0f, 1.0f, },
+				.texCoord = {
+					attrib.texcoords[2 * index.texcoord_index + 0],
+					1.0f - attrib.texcoords[2 * index.texcoord_index + 1],
+				},
+			};
+			
+			if (uniqueVertices.count(v) == 0) {
+				uniqueVertices[v] = static_cast<uint16_t>(vertices.size());
+				vertices.push_back(v);
+			}
+			indices.push_back(uniqueVertices[v]);
+		}
+	}
+}
+
 std::vector<char> HelloTriangleApplication::readFile(const std::string& filename)
 {
 	// ate: start reading from the end of the file
@@ -1914,7 +1957,11 @@ bool HelloTriangleApplication::hasStencilComponent(VkFormat format)
 		|| format == VK_FORMAT_D24_UNORM_S8_UINT;
 }
 
-void drawPolygon(Vertex center, int sides = 3, float radius = .5f) {
+void drawPolygon(Vertex center, 
+	std::vector<Vertex> &vertices, 
+	std::vector<uint16_t> &indices,
+	int sides = 3, float radius = .5f
+) {
 	vertices.clear();
 	indices.clear();
 	int M = sides;
@@ -1932,9 +1979,7 @@ void drawPolygon(Vertex center, int sides = 3, float radius = .5f) {
 	}
 }
 
-void drawCube(float a) {
-	vertices.clear();
-	indices.clear();
+void drawCube(float a, std::vector<Vertex> &vertices, std::vector<uint16_t> &indices) {
 	std::vector<Vertex> cubeVertices = {
 		{ {.0f, .0f, .0f}, {.0f, .0f, .0f}, {.0f, 1.0f/3}, },
 		{ {a, .0f, .0f}, {.0f, .0f, .0f}, {1.0f/4, 1.0f/3}, },
@@ -1962,14 +2007,13 @@ void drawCube(float a) {
 		8, 9, 4, 8, 4, 5,
 		6, 7, 11, 6, 11, 10,
 	};
-
 	vertices = cubeVertices;
 	indices = cubeIndices;
 }
 
 int main() {
 	// drawPolygon({ {.0f, .0f, .0f}, {.9f, .3f, .1f}, {.5f, .5f } }, 5, .5f);
-	drawCube(.75f);
+	// drawCube(.75f);
 	HelloTriangleApplication app;
 
 	try {
