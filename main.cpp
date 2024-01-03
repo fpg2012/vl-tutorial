@@ -611,9 +611,12 @@ VkExtent2D HelloTriangleApplication::chooseSwapExtent(const VkSurfaceCapabilitie
 		static_cast<uint32_t>(width),
 		static_cast<uint32_t>(height),
 	};
-
-	actualExtent.width = std::clamp(actualExtent.width, capabilities.minImageExtent.width, capabilities.maxImageExtent.width);
-	actualExtent.height = std::clamp(actualExtent.height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height);
+	const auto& maxWidth = capabilities.maxImageExtent.width;
+	const auto& minWidth = capabilities.minImageExtent.width;
+	const auto& maxHeight = capabilities.maxImageExtent.height;
+	const auto& minHeight = capabilities.minImageExtent.height;
+	actualExtent.width = std::clamp(actualExtent.width, minWidth, maxWidth);
+	actualExtent.height = std::clamp(actualExtent.height, minHeight, maxHeight);
 	return actualExtent;
 }
 
@@ -814,7 +817,10 @@ void HelloTriangleApplication::createGraphicsPipeline()
 	// color blend mode
 	VkPipelineColorBlendAttachmentState colorBlendAttachment{
 		.blendEnable = VK_FALSE,
-		.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT,
+		.colorWriteMask = VK_COLOR_COMPONENT_R_BIT
+						| VK_COLOR_COMPONENT_G_BIT
+						| VK_COLOR_COMPONENT_B_BIT
+						| VK_COLOR_COMPONENT_A_BIT,
 	};
 	// finalColor.rgb = newAlpha * newColor + (1 - newAlpha) * oldColor;
 	// finalColor.a = newAlpha.a;
@@ -1068,7 +1074,14 @@ void HelloTriangleApplication::drawFrame()
 
 	// 2. acquire an image from swapchain
 	uint32_t imageIndex;
-	VkResult result = vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
+	VkResult result = vkAcquireNextImageKHR(
+		device, 
+		swapChain, 
+		UINT64_MAX, 
+		imageAvailableSemaphores[currentFrame], 
+		VK_NULL_HANDLE, 
+		&imageIndex
+	);
 	if (result == VK_ERROR_OUT_OF_DATE_KHR) {
 		// out of date, just recreate it
 		recreateSwapChain();
@@ -1227,7 +1240,13 @@ void HelloTriangleApplication::createVertexBuffer()
 	vkFreeMemory(device, stagingBufferMemory, nullptr);
 }
 
-void HelloTriangleApplication::createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory)
+void HelloTriangleApplication::createBuffer(
+	VkDeviceSize size, 
+	VkBufferUsageFlags usage, 
+	VkMemoryPropertyFlags properties, 
+	VkBuffer& buffer, 
+	VkDeviceMemory& bufferMemory
+)
 {
 	VkBufferCreateInfo bufferInfo{
 		.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
@@ -1376,7 +1395,9 @@ void HelloTriangleApplication::updateUniformBuffer(uint32_t currentImage)
 	float time = chrono::duration<float, chrono::seconds::period>(currentTime - startTime).count();
 
 	UniformBufferObject ubo{
-		.model = glm::translate(glm::mat4(1.0f), glm::vec3(glm::cos(time / std::numbers::pi)/2, glm::sin(time)/2, glm::cos(time / std::numbers::pi) / 4)) * glm::rotate(glm::mat4(1.0f), time * glm::radians(45.0f), glm::vec3(.0f, 1.0f, .0f)) * glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(.0f, .0f, 1.0f)),
+		.model = glm::translate(glm::mat4(1.0f), glm::vec3(glm::cos(time / std::numbers::pi)/2, glm::sin(time)/2, glm::cos(time / std::numbers::pi) / 4))
+			     * glm::rotate(glm::mat4(1.0f), time * glm::radians(45.0f), glm::vec3(.0f, 1.0f, .0f))
+				 * glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(.0f, .0f, 1.0f)),
 		.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(.0f, .0f, .0f), glm::vec3(.0f, .0f, 1.0f)),
 		.proj = glm::perspective(glm::radians(45.0f), swapChainExtent.width / static_cast<float>(swapChainExtent.height), 0.1f, 10.0f),
 	};
@@ -1438,21 +1459,22 @@ void HelloTriangleApplication::createDescriptorSets()
 			.imageView = textureImageView,
 			.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
 		};
-		VkWriteDescriptorSet descriptorWrite{
-			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-			.dstSet = descriptorSets[i], // descriptor set to update
-			.dstBinding = 0, // uniform buffer binding index
-			.dstArrayElement = 0, // the first index in the descriptor array
-			.descriptorCount = 1, // how many array elements to update
-			.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-			.pImageInfo = nullptr,
-			.pBufferInfo = &bufferInfo,
-			.pTexelBufferView = nullptr,
-		};
 
-		std::array<VkWriteDescriptorSet, 2> descriptorWrites{
-			descriptorWrite,
-			{
+		std::array<VkWriteDescriptorSet, 2> descriptorWrites{};
+		// bind transformation matrix
+		descriptorWrites[0] = {
+				.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+				.dstSet = descriptorSets[i], // descriptor set to update
+				.dstBinding = 0, // uniform buffer binding index
+				.dstArrayElement = 0, // the first index in the descriptor array
+				.descriptorCount = 1, // how many array elements to update
+				.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+				.pImageInfo = nullptr,
+				.pBufferInfo = &bufferInfo,
+				.pTexelBufferView = nullptr,
+		};
+		// bind texture image view and sampler
+		descriptorWrites[1] = {
 				.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 				.dstSet = descriptorSets[i],
 				.dstBinding = 1,
@@ -1460,7 +1482,6 @@ void HelloTriangleApplication::createDescriptorSets()
 				.descriptorCount = 1,
 				.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 				.pImageInfo = &imageInfo,
-			}
 		};
 
 		vkUpdateDescriptorSets(device, descriptorWrites.size(), descriptorWrites.data(), 0, nullptr);
@@ -1522,7 +1543,11 @@ void HelloTriangleApplication::createTextureImage()
 	vkFreeMemory(device, stagingBufferMemory, nullptr);
 }
 
-void HelloTriangleApplication::createImage(uint32_t width, uint32_t height, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& imageMemory)
+void HelloTriangleApplication::createImage(
+	uint32_t width, uint32_t height, 
+	VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, 
+	VkImage& image, VkDeviceMemory& imageMemory
+)
 {
 	VkImageCreateInfo imageInfo{
 		.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
@@ -1642,7 +1667,8 @@ void HelloTriangleApplication::transitionImageLayout(VkImage image, VkFormat for
 		srcStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
 		dstStage = VK_PIPELINE_STAGE_TRANSFER_BIT; // pseudo-stage where transfers happen
 	}
-	else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+	else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
+		     && newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
 		barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
 		barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
 		srcStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
