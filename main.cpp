@@ -134,11 +134,17 @@ struct SwapChainSupportDetails {
 	std::vector<VkPresentModeKHR> presentModes;
 };
 
+struct UserControlState {
+	float scaleFactor = .0f;
+};
+
 // wrap all operations into this class
 class HelloTriangleApplication {
 public:
 	HelloTriangleApplication() = default;
 	void run();
+
+	UserControlState controlState;
 private:
 	void initWindow();
 	void initVulkan();
@@ -204,6 +210,7 @@ private:
 
 	static std::vector<char> readFile(const std::string& filename);
 	static void framebufferResizeCallback(GLFWwindow* window, int width, int height);
+	static void scrollCallBack(GLFWwindow* window, double xoffset, double yoffset);
 
 	GLFWwindow* window;
 	VkInstance instance;
@@ -355,6 +362,7 @@ void HelloTriangleApplication::initWindow() {
 	window = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan", nullptr, nullptr);
 	glfwSetWindowUserPointer(window, this);
 	glfwSetFramebufferSizeCallback(window, &framebufferResizeCallback);
+	glfwSetScrollCallback(window, &scrollCallBack);
 }
 
 // init VkInstance, physical device and logical device
@@ -1934,11 +1942,6 @@ void HelloTriangleApplication::loadModel()
 	}
 }
 
-glm::mat4 HelloTriangleApplication::getTransform(float time)
-{
-	return glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(.0f, .0f, 1.0f));
-}
-
 void HelloTriangleApplication::generateMipmaps(VkImage image, VkFormat imageFormat, int32_t texWidth, int32_t texHeight, uint32_t mipLevels)
 {
 	VkFormatProperties formatProperties;
@@ -2057,10 +2060,22 @@ void HelloTriangleApplication::framebufferResizeCallback(GLFWwindow* window, int
 	app->framebufferResized = true;
 }
 
+void HelloTriangleApplication::scrollCallBack(GLFWwindow* window, double xoffset, double yoffset)
+{
+	auto app = reinterpret_cast<HelloTriangleApplication*>(glfwGetWindowUserPointer(window));
+	app->controlState.scaleFactor += static_cast<float>(yoffset / 2);
+}
+
 bool HelloTriangleApplication::hasStencilComponent(VkFormat format)
 {
 	return format == VK_FORMAT_D32_SFLOAT_S8_UINT
 		|| format == VK_FORMAT_D24_UNORM_S8_UINT;
+}
+
+glm::mat4 HelloTriangleApplication::getTransform(float time)
+{
+	float scaleFactor = std::exp(controlState.scaleFactor);
+	return glm::scale(glm::mat4(1.0f), glm::vec3(scaleFactor));
 }
 
 void drawPolygon(Vertex center, 
