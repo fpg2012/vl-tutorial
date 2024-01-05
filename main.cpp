@@ -38,7 +38,7 @@ const VkClearValue CLEAR_DEPTH = { 1.0f, 0 }; // 1.0f => far, 0 => near
 // "textures/cube.png"
 // "textures/viking_room.png"
 // "textures/Skimmia_Japonica.jpg"
-const char* TEXTURE_FILE = "textures/viking_room.png";
+const char* TEXTURE_FILE = "textures/cube.png";
 // "models/viking_room.obj"
 // "models/viking_room.obj"
 const std::string MODEL_PATH = "models/viking_room.obj";
@@ -143,8 +143,11 @@ class HelloTriangleApplication {
 public:
 	HelloTriangleApplication() = default;
 	void run();
+	void loadModel();
 
 	UserControlState controlState;
+	std::vector<Vertex> vertices;
+	std::vector<uint16_t> indices;
 private:
 	void initWindow();
 	void initVulkan();
@@ -204,7 +207,6 @@ private:
 	VkFormat findSupportedFormat(const std::vector<VkFormat>& candidates, VkImageTiling tiling, VkFormatFeatureFlags features);
 	VkFormat findDepthFormat();
 	bool hasStencilComponent(VkFormat format);
-	void loadModel();
 	glm::mat4 getTransform(float time);
 	void generateMipmaps(VkImage image, VkFormat imageFormat, int32_t texWidth, int32_t texHeight, uint32_t mipLevels);
 	VkSampleCountFlagBits getMaxUsableSampleCount();
@@ -236,8 +238,6 @@ private:
 	std::vector<VkSemaphore> imageAvailableSemaphores;
 	std::vector<VkSemaphore> renderFinishedSemaphores;
 	std::vector<VkFence> inFlightFences;
-	std::vector<Vertex> vertices;
-	std::vector<uint16_t> indices;
 	VkBuffer vertexBuffer;
 	VkDeviceMemory vertexBufferMemory;
 	VkBuffer indexBuffer;
@@ -266,7 +266,6 @@ private:
 
 void HelloTriangleApplication::run() {
 	initWindow(); // init window with GLFW
-	loadModel();
 	initVulkan(); // init VkInstance, physical device and logical device
 	mainLoop();
 	cleanup();
@@ -469,6 +468,11 @@ void HelloTriangleApplication::pickPhysicalDevice() {
 	if (physicalDevice == VK_NULL_HANDLE) {
 		throw std::runtime_error("failed to find a suitable GPU!");
 	}
+	
+	VkPhysicalDeviceProperties properties;
+	vkGetPhysicalDeviceProperties(physicalDevice, &properties);
+	std::cout << "Physical Device Name: " << properties.deviceName << std::endl;
+	std::cout << "MSAA Samples: " << std::hex << msaaSamples << std::dec << std::endl;
 }
 
 bool HelloTriangleApplication::isDeviceSuitable(VkPhysicalDevice device) {
@@ -2200,11 +2204,11 @@ void drawCube(float a, std::vector<Vertex> &vertices, std::vector<uint16_t> &ind
 }
 
 int main() {
-	// drawPolygon({ {.0f, .0f, .0f}, {.9f, .3f, .1f}, {.5f, .5f } }, 5, .5f);
-	// drawCube(.75f);
 	HelloTriangleApplication app;
 
 	try {
+		// app.loadModel();
+		drawCube(.75, app.vertices, app.indices);
 		app.run();
 	}
 	catch (const std::exception& e) {
