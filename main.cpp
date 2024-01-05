@@ -221,40 +221,52 @@ private:
 	VkPhysicalDevice physicalDevice = VK_NULL_HANDLE; // will be implicitly destroyed
 	VkDevice device; // logical device
 	VkSurfaceKHR surface; // window surface exposed by VK_KHR_surface extension
+
 	VkQueue graphicsQueue;
 	VkQueue presentQueue;
+
 	VkSwapchainKHR swapChain;
 	std::vector<VkImage> swapChainImages;
 	VkFormat swapChainImageFormat;
 	VkExtent2D swapChainExtent;
 	std::vector<VkImageView> swapChainImageViews;
+	std::vector<VkFramebuffer> swapChainFramebuffers;
+
 	VkRenderPass renderPass;
 	VkDescriptorSetLayout descriptorSetLayout;
 	VkPipelineLayout pipelineLayout;
 	VkPipeline graphicsPipeline;
-	std::vector<VkFramebuffer> swapChainFramebuffers;
+
 	VkCommandPool commandPool;
 	std::vector<VkCommandBuffer> commandBuffers;
+
 	std::vector<VkSemaphore> imageAvailableSemaphores;
 	std::vector<VkSemaphore> renderFinishedSemaphores;
 	std::vector<VkFence> inFlightFences;
+
 	VkBuffer vertexBuffer;
 	VkDeviceMemory vertexBufferMemory;
+
 	VkBuffer indexBuffer;
 	VkDeviceMemory indexBufferMemory;
+
 	std::vector<VkBuffer> uniformBuffers;
 	std::vector<VkDeviceMemory> uniformBuffersMemory;
 	std::vector<void*> uniformBuffersMapped;
+
 	VkDescriptorPool descriptorPool;
 	std::vector<VkDescriptorSet> descriptorSets;
+
 	uint32_t mipLevels;
 	VkImage textureImage;
 	VkDeviceMemory textureImageMemory;
 	VkImageView textureImageView;
 	VkSampler textureSampler;
+
 	VkImage depthImage;
 	VkDeviceMemory depthImageMemory;
 	VkImageView depthImageView;
+
 	VkSampleCountFlagBits msaaSamples = VK_SAMPLE_COUNT_1_BIT; // no MSAA by default
 	VkImage colorImage;
 	VkDeviceMemory colorImageMemory;
