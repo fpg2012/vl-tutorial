@@ -32,9 +32,9 @@
 
 const uint32_t WIDTH = 600; // width of the window
 const uint32_t HEIGHT = 600; // height of the window
-const int PARTICLE_COUNT = 1024;
+const int PARTICLE_COUNT = 65536 * 2;
 const int MAX_FRAMES_IN_FLIGHT = 2;
-const VkClearValue CLEAR_COLOR = { {{.0f, .1f, .1f, 1.0f}} };
+const VkClearValue CLEAR_COLOR = { {{.01f, .01f, .01f, 1.0f}} };
 const VkClearValue CLEAR_DEPTH = { 1.0f, 0 }; // 1.0f => far, 0 => near
 // "textures/texture.jpg"
 // "textures/cube.png"
@@ -1542,13 +1542,15 @@ void HelloTriangleApplication::createStorageBuffers()
 
 	std::vector<Particle> particles(PARTICLE_COUNT);
 	for (auto& particle : particles) {
-		float r = .25f * sqrtf(rndDist(rndEngine));
-		float theta = rndDist(rndEngine) * 2.0f * std::numbers::pi;
-		float x = r * cosf(theta) * HEIGHT / WIDTH;
-		float y = r * sinf(theta);
+		// float r = .25f * sqrtf(rndDist(rndEngine));
+		// float theta = rndDist(rndEngine) * 2.0f * std::numbers::pi;
+		// float x = r * cosf(theta) * HEIGHT / WIDTH;
+		// float y = r * sinf(theta);
+		float x = rndDist(rndEngine) * 2.0f - 1.0f, y = rndDist(rndEngine) * 2.0f - 1.0f;
+		float vx = rndDist(rndEngine), vy = rndDist(rndEngine);
 
 		particle.position = glm::vec2(x, y);
-		particle.velocity = glm::normalize(glm::vec2(x, y)) * .00025f;
+		particle.velocity = glm::normalize(glm::vec2(vx, vy)) * .00025f;
 		float red = rndDist(rndEngine), green = rndDist(rndEngine), blue = rndDist(rndEngine);
 		particle.color = glm::vec4(red, green, blue, 1.0f);
 	}
